@@ -1,0 +1,93 @@
+---
+title: "Week2"
+author: "Zach Schroeder"
+date: "4/9/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Library}
+library(tidyverse)
+```
+
+```{r}
+curran <- read_csv(here::here("data", "curran.csv"))
+curran
+```
+
+Practice with pivoting
+```{r}
+read <- curran %>% 
+  select(id, starts_with("read"))
+
+read %>% 
+  pivot_longer(cols = read1:read4,
+               names_to = "timepoint",
+               values_to = "score")
+
+# COOL PARSE NUMBER FUNCTION TO ONLY KEEP NUMBERS
+read %>% 
+  pivot_longer(-id,
+               names_to = "timepoint",
+               values_to = "score") %>% 
+  mutate(timepoint = parse_number(timepoint) - 1)
+```
+
+CHALLENGE
+```{r}
+# OOPS didn't have the variables listed together
+
+long <- curran %>% 
+  pivot_longer(c(starts_with("read"), starts_with("anti")),
+               names_to = "variable", 
+               values_to = "score") %>% 
+  mutate(timepoint = parse_number(variable) -1,
+         variable = substr(variable, 1, 4))
+```
+Challenge 2
+```{r}
+# Long anti
+anti <- curran %>% 
+  select(id, starts_with("anti")) %>% 
+  pivot_longer(cols = anti1:anti4,
+               names_to = "timepoint",
+               values_to = "anti") %>% 
+  mutate(timepoint = parse_number(timepoint) - 1)
+# Long read
+read <- curran %>% 
+  select(id, starts_with("read")) %>% 
+  pivot_longer(cols = read1:read4,
+               names_to = "timepoint",
+               values_to = "read") %>% 
+  mutate(timepoint = parse_number(timepoint) - 1)
+
+long <- left_join(anti, read, by = c("id", "timepoint"))
+other_data <- curran %>% 
+  select(id, kidgen:nmis)
+d <- full_join(long, other_data, by= "id")
+```
+
+
+MODELS
+
+```{r, cache=TRUE}
+library(lme4)
+#So this bad boy just has a variable intercept as specified in the (1|id)
+m_intercepts <- lmer(read ~ 1 + timepoint + (1|id),
+                     data = d)
+summary(m_intercepts)
+
+# now we're adding in a random slope
+m_slopes <- lmer(read ~ timepoint + (timepoint|id),
+                     data = d)
+summary(m_slopes)
+
+anova(m_intercepts, m_slopes)
+performance::compare_performance(m_intercepts, m_slopes)
+```
+

@@ -1,0 +1,109 @@
+---
+title: "Homework 1"
+author: "Zach Schroeder"
+date: "4/9/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r library, echo=FALSE}
+library(lme4)
+library(tidyverse)
+```
+
+```{r data import}
+data <- read_csv(here::here("data", "longitudinal-sim.csv"))
+```
+
+# Part 1: Data Structuring
+
+```{r, warning=FALSE}
+g3 <- data %>%
+  select(sid, g3_fall:g3_spring) %>% 
+  rename(., "0" = g3_fall, 
+         "1" = g3_winter, 
+         "2" = g3_spring) %>% 
+  pivot_longer(cols = -sid,
+               names_to = "time", 
+               values_to = "score") %>% 
+  mutate("grade" = rep(3, nrow(data)*3))
+g4 <- data %>%
+  select(sid, g4_fall:g4_spring) %>% 
+  rename(., "3" = g4_fall, 
+         "4" = g4_winter, 
+         "5" = g4_spring) %>% 
+  pivot_longer(cols = -sid,
+               names_to = "time", 
+               values_to = "score") %>% 
+  mutate("grade" = rep(4, nrow(data)*3))
+g5 <- data %>%
+  select(sid, g5_fall:g5_spring) %>% 
+  rename(., "6" = g5_fall, 
+         "7" = g5_winter, 
+         "8" = g5_spring) %>% 
+  pivot_longer(cols = -sid,
+               names_to = "time", 
+               values_to = "score") %>% 
+  mutate("grade" = rep(5, nrow(data)*3))
+
+long <- rbind(g3, g4, g5)
+
+otherdat <- data %>% 
+  select(distid:sid)
+long <- full_join(otherdat, long, by = "sid")
+long$time <- as.numeric(long$time)
+long$grade <- as.factor(long$grade)
+```
+
+# Part 2: Model fit and evaluation
+
+## Part A
+```{r, cache = TRUE, warning=FALSE}
+model1 <- lmer(score ~ 1 + time + (1|sid),
+                     data = long)
+model2 <- lmer(score ~ 1 + time + (1|sid) + grade,
+                     data = long)
+model3 <- lmer(score ~ 1 + time + (time|sid),
+                     data = long)
+model4 <- lmer(score ~ 1 + time + (time|sid) + grade,
+                     data = long)
+```
+
+## Part B
+```{r}
+anova(model1, model2, model3, model4)
+```
+
+Based on the above output, I believe that model 4 (the conditional growth model with random intercepts, random slopes, and grade-level fixed effects) displays the best fit for the data. I drew this conclusion by examining the Chi-Square test for each of the models in an anova output, which showed that model4 had a chi square value of 37,468 and a p-value < .001; these two metrics imply that the addition of the grade-level variables to our random intercepts and random slopes conditional slopes model. Additionally, and more useful for comparing four models, comparing the AIC and BIC values shows that model4 has the lowest AIC and BIC values, suggesting that the model fits better than we are penalized for adding additional parameters.
+
+## Part C
+
+```{r, warning = FALSE}
+summary(model4)
+fef <- broom.mixed::tidy(model4, effects = "fixed", conf.int = TRUE)
+confint(model4)
+```
+
+The average grade 3 student scores 188.79 [95% CI = 188.65, 188.93] at wave 0 (Fall of grade 3) and an SD of random effects of 10.09 [95% CI = 9.99, 10.19] suggesting that students varied by about 10.09 points. With each additional wave, students are expected to increase their score by 6.18 [95% CI = 6.15, 6.21] with an SD of 1.16 [95% CI = 1.14, 1.17], again suggesting that student slopes varied by about 1.16 over time. There is an effect of grade, such students in grade 4 are expected to score -8.17 points lower than grade 3 (95% CI = -8.26, -8.08) and students in grade 5 are expected to score -16.70 points lower than grade 3 (95% CI = -16.85, -16.53). 
+
+
+# Part 3 Plots of the model fit
+
+```{r}
+first_three <- long %>% 
+  ungroup() %>%
+  filter(sid %in% c("1-1-1", "1-1-2", "1-1-3"))
+
+first_three <- first_three %>% 
+  mutate(model_pred = predict(model4, newdata = first_three))
+
+ggplot(data = first_three) +
+  geom_point(aes(x = time, y = score)) +
+  geom_line(aes(x = time, y = model_pred, color = "firebrick4")) +
+  facet_wrap(~sid) +
+  labs(x = "wave") +
+  theme(legend.position = "none")
+```
+

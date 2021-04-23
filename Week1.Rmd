@@ -1,0 +1,40 @@
+---
+title: "MLM2_Intro"
+author: "Zach Schroeder"
+date: "4/2/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+library(tidyverse)
+library(lme4)
+library(janitor)
+library(brms)
+library(lmerTest)
+library(equatiomatic)
+library(easystats)
+```
+
+```{r}
+sch_means <- hsb %>% 
+  group_by(sch.id) %>% 
+  summarize(sch_mean = mean(math, na.rm = TRUE),
+            sch_mean_se = sd(math, na.rm = TRUE)/sqrt(n()))
+sch_means
+```
+
+```{r}
+ggplot(sch_means, aes(sch_mean, sch.id)) +
+  geom_point()
+```
+
+```{r}
+sch_means %>% 
+  mutate(sch.id = factor(sch.id),
+         sch.id = reorder(sch.id, sch_mean)) %>% 
+  ggplot(aes(sch_mean, sch.id)) +
+  geom_point()
+```
+
