@@ -1,0 +1,171 @@
+---
+title: "Homework2"
+author: "Zach Schroeder"
+date: "5/6/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(lme4)
+library(nlme)
+```
+
+Background
+For this homework, we will use a dataset on adolescent alcohol use collected by Curran et al., which includes three waves of data on 82 adolescents. Below is some additional information about the data.
+
+Waves of data were collected annually, beginning at age 14
+alcuse is the outcome, ranging from 0 (“not at all”) to 7 (“every day”). A square root transformation has been applied.
+coa is a dummy variabe indicating whether or not the participant was the child of and alcoholic.
+peer is measure of alcohol use among the participant’s peer group. Similar to the outcome, a square root transformation has been applied.
+
+1: Data
+Read in the data and conduct any data prep work needed. Specifically, we will be fitting a number of different growth models in this homework, so you’ll need to think about how you’re going to code time.
+
+```{r}
+data <- read_csv(here::here("data", "alcohol-adolescents(hw2).csv"))
+data$coa <- data$coa
+data$male <- factor(data$male)
+data$wave <- data$age - 14
+data$peer <- round(data$peer, 0)
+```
+
+*I have created a "wave" variable that begins at 0, thus allowing for meaningful interpretation of the intercept in subsequent models.*
+
+2: Initial fits
+Fit a model with random intercepts and parallel slopes. Compare the fit of this model to a one with random intercepts and random slopes. Describe which model you believe fits the data better, and provide evidence to justify this conclusion.
+
+```{r}
+rips <- lmer(alcuse ~ wave + (1|id),data)
+rirs <- lmer(alcuse ~ wave + (wave|id), data)
+performance::compare_performance(rips, rirs,
+                    metrics = c("AIC", "BIC"),
+                    rank = TRUE) %>% 
+  as_tibble()
+ 
+```
+
+*Comparing fits using the AIC and BIC suggests that the Random Slopes model has better fit, however, it is only slightly better on the AIC metric, the BIC metric does not show an improvement. This suggests that we are approaching overfitting and need to proceed with caution. As such, my preference is for the parallel slopes model as it is simpler and fits the data comparably well.*
+
+3: Alternative residual VCOV
+Use Generalized Least Squares (gls) to re-estimate the model with (a) autoregressive, (b) heterogeneous autoregressive, and (c) Toeplitz structures. Compare the composite residuals from these models with the composite residual from the random slopes model fit in Question 2.
+
+```{r}
+#RANDOM SLOPES MODEL COMPOSITE RESIDUAL
+rirs_rvcv <- sundry::pull_residual_vcov(rirs)
+rirs_rvcv[1:3, 1:3]
+```
+
+
+```{r}
+#AUTOREGRESSIVE MODEL
+ar <- gls(alcuse ~ wave, 
+          data = data,
+          correlation = corAR1(form = ~ 1|id))
+
+#Extracting composite residuals
+cm_ar <- corMatrix(ar$modelStruct$corStruct)
+cr_ar <- cm_ar[[1]] 
+ar_rvcv <- cr_ar * sigma(ar)^2
+
+# HETEROGENOUS AUTOREGRESSIVE MODEL
+har <- gls(
+  alcuse ~ wave,
+  data = data,
+  correlation = corAR1(form = ~ 1|id),
+  weights = varIdent(form = ~1|wave)
+)
+
+#Extract composite residuals
+cm_har <- corMatrix(har$modelStruct$corStruct)[[1]] 
+var_struct <- har$modelStruct$varStruct
+vars <- coef(var_struct, unconstrained = FALSE, allCoef = TRUE)
+vars <- matrix(vars, ncol = 1)
+har_rvcv <- cm_har * sigma(har)^2 * 
+  (vars %*% t(vars))
+
+#TOEPLITZ MODEL
+toep <- gls(alcuse ~ wave,
+            data = data,
+            correlation = corARMA(form = ~ 1|id, p = 2))
+cr_toep <- corMatrix(toep$modelStruct$corStruct)[[1]] 
+toep_rvcv <- cr_toep * sigma(toep)^2
+```
+
+
+Composite residuals:
+```{r}
+rirs_rvcv[1:3, 1:3]
+ar_rvcv[1:3, 1:3]
+har_rvcv[1:3, 1:3]
+toep_rvcv[1:3, 1:3]
+```
+
+*Structurally, in this model, the AR and Toepliz models have similar structures to their composite residuals - they have banded residuals that decay as they go outward. The random slopes and HAR models have similar residuals structures, with parallel bands the in the other direction and more variability in the residuals than the AR or the Toepliz models*
+
+4: Comparing models 
+Compare the fit of all models. Which model does the evidence suggest provides the best fit to the data?
+
+```{r}
+performance::compare_performance(ar, har, toep, rips, rirs,
+                    metrics = c("AIC", "BIC"),
+                    rank = TRUE) %>% 
+  as_tibble()
+```
+
+*Again, it seems our BIC and AIC indicators of improvement of model fit are making small adjustments, so there isn't a super clear winner, but it does appear that the AR model makes substantial improvements on both the AIC and BIC indicators, so it would be my choice for supreme model*
+
+
+5: Adding predictors
+Include coa and peer as predictors in the model. Evaluate whether adolescents alcohol use trajectories (slopes) depend on these variables. You can extend your {lme4} model or your gls() model, regardless of your conclusions from above. Provide a brief summary of your findings (you do not have to interpret the entire model, just whether or not the trajectories depend on coa and/or peer).
+
+```{r}
+ripsc <- lmer(alcuse ~ wave + coa + (coa|id),data)
+ripsp <- lmer(alcuse ~ wave + peer + (peer|id),data)
+ripspp <- lmer(alcuse ~ wave + coa + peer + (wave|id),data)
+ripspc <- lmer(alcuse ~ wave + coa + peer + (peer|id) + (coa|id),data)
+performance::compare_performance(rips, ripsc, ripsp, ripspc,
+                    metrics = c("AIC", "BIC"),
+                    rank = TRUE) %>% 
+  as_tibble()
+coef <- broom.mixed::tidy(
+  ripsp,
+  effects = "ran_pars", 
+  conf.int = TRUE, 
+  conf.method = "boot"
+)
+```
+
+*Examining the AIC and BIC indices suggests that including the peer values does significantly improve model fit without overfitting (though, again, I note that we're missing clear improvement from model to model). The models including coa did not improve fit above and beyond the peer predictor model, as such, they are not going to be used. As such, I ran bootstrapped CIs from this model in order to be able to infer whether our 95% CI included 0. It did not [95% CI = (0.152, 0.858)], which suggests that our slopes do depend on peer alcohol use.*
+
+6: Plots
+Produce the following plot. Don’t worry about differences in the theming. Just get the basics structure. Note, I’m using the model that I felt displayed the best fit to the data to make my predictions.
+
+```{r}
+pred_frame <- expand.grid(
+  peer = 0:2,
+  coa = 0:1,
+  wave = 0:2,
+  id = -999
+)
+
+pred_frame <- pred_frame %>% 
+  mutate(pred = predict(ripspp, 
+                        pred_frame, 
+                        allow.new.levels = TRUE))
+
+pred_frame <- pred_frame %>% 
+  mutate(pred_int = predict(ripspp, 
+                            newdata = pred_frame, 
+                            allow.new.levels = TRUE))
+pred_frame %>% 
+  drop_na() %>% 
+  ggplot(aes(wave, pred_int)) +
+  geom_line(aes(color = factor(peer))) +
+  facet_wrap(~coa)
+
+```
+

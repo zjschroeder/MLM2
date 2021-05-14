@@ -1,0 +1,128 @@
+---
+title: "Week5"
+author: "Zach Schroeder"
+date: "4/30/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(lme4)
+library(tidyverse)
+#First model
+model <- lmer(Reaction ~ (1|Subject),
+              data = sleepstudy)
+
+# Second Model
+model2 <- lmer(Reaction ~ Days + (1|Subject),
+              data = sleepstudy)
+
+model2 <- lmer(Reaction ~ Days + (Days|Subject),
+              data = sleepstudy)
+```
+
+SIM3 Data
+```{r}
+sim3 <- rio::import(here::here("data", "sim3level.csv"))
+sim3 <- sim3 %>% 
+  mutate(class_id = paste0("class", Classroom, ":", School))
+
+lmer(Math ~ ActiveTime + (ActiveTime|class_id) + (1|School),
+     data = sim3)
+
+harder_model <- lmer(Math ~ ActiveTime*ClassSize + (ActiveTime|class_id) + (ActiveTime|School),
+     data = sim3)
+#EQUIVALENT:
+harder_model <- lmer(Math ~ ActiveTime + ClassSize + ActiveTime:ClassSize + (ActiveTime|class_id) + (ActiveTime|School),
+     data = sim3)
+```
+
+Residual Structures
+```{r}
+library(sundry)
+willett <- read_csv(here::here("data", "willett-1988.csv"))
+w0 <- lmer(opp ~ time + (1|id), willett)
+w0_rvcv <- sundry::pull_residual_vcov(w0)
+image(w0_rvcv)
+vars_w0 <- as.data.frame(VarCorr(w0))
+vars_w0
+# Fitting complex model
+w1 <- lmer(opp ~ time + (time|id), willett)
+w1_rvcv <- sundry::pull_residual_vcov(w1)
+w1_rvcv[1:4, 1:4]
+```
+
+Variance models
+(fully) unstructured
+```{r}
+w <- willett %>% 
+  mutate(t0 = ifelse(time == 0, 1, 0),
+         t1 = ifelse(time == 1, 1, 0),
+         t2 = ifelse(time == 2, 1, 0),
+         t3 = ifelse(time == 3, 1, 0))
+varcomp <- lmer(opp ~  time + (0 + t0 + t1 + t2 + t3 || id), w)
+summary(varcomp)
+
+fully_unstructured <- lmer(
+  opp ~  time + (0 + t0 + t1 + t2 + t3 | id), 
+  data = w,
+  control = lmerControl(check.nobs.vs.nRE = "ignore")
+)
+```
+
+Autoregressive 1
+
+```{r}
+library(nlme)
+ar <- gls(opp ~ time, 
+          data = willett,
+          correlation = corAR1(form = ~ 1|id))
+summary(ar)
+cm_ar <- corMatrix(ar$modelStruct$corStruct) # all of them
+cr_ar <- cm_ar[[1]] # just the first (they're all the same)
+cr_ar
+cr_ar * sigma(ar)^2
+```
+
+Heterogenious Autoregressive
+```{r}
+har <- gls(
+  opp ~ time,
+  data = willett,
+  correlation = corAR1(form = ~ 1|id),
+  weights = varIdent(form = ~1|time)
+)
+summary(har)
+cm_har <- corMatrix(har$modelStruct$corStruct)[[1]] 
+var_struct <- har$modelStruct$varStruct
+vars <- coef(var_struct, unconstrained = FALSE, allCoef = TRUE)
+vars <- matrix(vars, ncol = 1)
+cm_har * sigma(har)^2 * 
+  (vars %*% t(vars)) # multiply by a mat of vars
+```
+
+Basically this is the midpoint for when we go... variances are likely to vary over time (waves) but we dont' have a good enough computer to do it like for everybody
+
+Toeplitz
+Each band diagonal gets its own phi
+
+```{r}
+toep <- gls(opp ~ time, 
+            data = willett,
+            correlation = corARMA(form = ~ 1|id, p = 3))
+summary(toep)
+cr_toep <- corMatrix(toep$modelStruct$corStruct)[[1]] 
+cr_toep * sigma(toep)^2
+library(performance)
+compare_performance(ar, har, toep, w1, varcomp, fully_unstructured,
+                    metrics = c("AIC", "BIC"),
+                    rank = TRUE) %>% 
+  as_tibble()
+
+```
+

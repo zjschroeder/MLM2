@@ -1,0 +1,258 @@
+---
+title: "week6"
+author: "Zach Schroeder"
+date: "5/7/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Practice models
+
+```{r}
+library(tidyverse)
+library(lme4)
+d <- read_csv(here::here("data", "longitudinal-sim.csv"))
+m <- lmer(g5_spring ~  (1|scid) + (1|distid) +g4_spring + g3_spring, d)
+
+#Exercise 2
+d <- d %>% 
+  group_by(scid) %>% 
+  mutate(sch_mean_start = mean(g3_fall)) %>% 
+  group_by(distid) %>% 
+  mutate(dist_mean_start = mean(g3_fall))
+m <- lmer(g5_spring ~ g4_spring + g3_spring + sch_mean_start + (g3_spring|scid) + (1|distid), d)
+
+#Exercise 3
+lmer(g5_spring ~ g4_spring + g3_spring + sch_mean_start + 
+       (g4_spring + g3_spring|scid) + 
+       (g4_spring + g3_spring|distid),
+     data = d)
+
+#Exercise 4
+lmer(g5_spring ~ g4_spring + g3_spring*sch_mean_start + 
+       (g4_spring + g3_spring|scid) + 
+       (g4_spring + g3_spring|distid),
+     data = d)
+lmer(g5_spring ~ g4_spring + g3_spring + dist_mean_start + 
+       (g4_spring + g3_spring||scid) + 
+       (g4_spring + g3_spring||distid),
+     data = d)
+
+# MOve to long
+l <- d %>% 
+  pivot_longer(
+    cols = starts_with("g"),
+    names_to = "timepoint",
+    values_to = "score"
+  )
+l
+wave_frame <- tibble(
+  timepoint = paste0(
+    "g", 
+    rep(3:5, each = 3), 
+    rep(c("_fall", "_winter", "_spring"), 3)
+  ),
+  wave = 0:8
+)
+wave_frame
+l <- left_join(l, wave_frame)
+# Model 6
+lmer(score ~ wave +
+       (wave|sid) + (wave|scid) + (1|distid),
+     data = d)
+
+# Model 7
+lmer(score ~ wave*dist_mean_start*sch_mean_start + 
+       (wave|sid) + (wave|scid) + (sch_mean_start|distid),
+     data = d)
+# Model 8
+lmer(score ~ sch_mean_start + dist_mean_start + (wave|sid), l)
+```
+
+DATA
+```{r}
+d <- read_csv(here::here("data", "cnlsy.csv"))
+library(lme4)
+d <- d %>% 
+  mutate(wave_c = wave - 1)
+m_wave <- lmer(piat ~ wave_c + (wave_c|id),
+               data = d)
+m_agegrp <- lmer(piat ~ agegrp + (agegrp|id),
+                 data = d,
+                 control = lmerControl(optimizer = "bobyqa"))
+```
+
+Ah ha! We must center!
+
+```{r}
+d <- d %>% 
+  mutate(agegrp_c = agegrp - 6.5,
+         age_c = age - 6)
+m_agegrp2 <- lmer(piat ~ agegrp_c + (agegrp_c|id),
+                 data = d,
+                 control = lmerControl(optimizer = "bobyqa"))
+m_age <- lmer(piat ~ age_c + (age_c|id),
+                 data = d,
+                 control = lmerControl(optimizer = "bobyqa"))
+performance::compare_performance(m_agegrp2, m_age,
+                    metrics = c("AIC", "BIC"),
+                    rank = TRUE) %>% 
+  as_tibble()
+```
+
+Modeling monthly growth (as opposed to yearly growth)
+
+```{r}
+d <- d %>% 
+  mutate( age_m = (age - 6)*12)
+m_age <- lmer(piat ~ age_m + (age_m|id),
+                 data = d,
+                 control = lmerControl(optimizer = "bobyqa"))
+arm::display(m_age)
+```
+
+Wages Data
+
+```{r}
+wages <- read_csv(here::here("data", "wages.csv"))
+m_wage0 <- lmer(lnw ~ exper + (exper|id), data = wages,
+                control = lmerControl(optimizer = "bobyqa"))
+arm::display(m_wage0)
+```
+
+Is the relation between experience and log wages the same across coded race/ethnicity categories? Do these relations depend on highest grade completed?
+
+```{r}
+wages <- wages %>% 
+  mutate(hgc_9 = hgc-9)
+wage1 <- lmer(lnw ~ exper + hispanic + black + hgc_9 + (exper|id), 
+              data = wages,
+              control = lmerControl(optimizer = "bobyqa"))
+```
+
+Plotting
+
+```{r}
+m_wage1 <- lmer(lnw ~ exper + black + hispanic + hgc_9 +
+                  (exper|id),
+                data = wages,
+                control = lmerControl(optimizer = "bobyqa"))
+pred_frame <- expand.grid(
+  exper = 0:15,
+  black = 0:1,
+  hispanic = 0:1,
+  hgc_9 = 6:12 - 9,
+  id = -999
+)
+pred_frame <- pred_frame %>% 
+  mutate(pred = predict(m_wage1, 
+                        pred_frame, 
+                        allow.new.levels = TRUE))
+pred_frame <- pred_frame %>% 
+  mutate(
+    race_eth = case_when(
+      black == 0 & hispanic == 0 ~ "White",
+      black == 1 & hispanic == 0 ~ "Black",
+      black == 0 & hispanic == 1 ~ "Hispanic",
+      TRUE ~ NA_character_
+    )
+  )
+pred_frame %>% 
+  drop_na() %>% 
+  filter(hgc_9 == 0) %>% 
+  ggplot(aes(exper, pred)) +
+  geom_line(aes(color = race_eth))
+
+m_wage2 <- lmer(lnw ~ exper + black + exper:black +
+                  exper:hispanic + 
+                  hgc_9 + exper:hgc_9 +
+                  (exper|id),
+                data = wages,
+                control = lmerControl(optimizer = "bobyqa"))
+pred_frame <- pred_frame %>% 
+  mutate(pred_int = predict(m_wage2, 
+                            newdata = pred_frame, 
+                            allow.new.levels = TRUE))
+pred_frame %>% 
+  drop_na() %>% 
+  filter(hgc_9 == -3 | hgc_9 == 3) %>% 
+  ggplot(aes(exper, pred_int)) +
+  geom_line(aes(color = race_eth)) +
+  facet_wrap(~hgc_9)
+pred_frame %>% 
+  drop_na() %>% 
+  ggplot(aes(exper, pred_int)) +
+  geom_line(aes(color = factor(hgc_9))) +
+  facet_wrap(~race_eth) +
+  scale_color_brewer("Highest grade completed", 
+                     palette = "Accent", 
+                     breaks = 3:-3,
+                     labels = 12:6) +
+  labs(x = "Experience (years)",
+       y = "Model Predicted wages (log scaled)")
+```
+
+Non linearity
+
+```{r}
+sim_d <- read_csv(here::here("data", "curvilinear-sim.csv"))
+sim_d %>% 
+  arrange(sid, date) %>% 
+  group_by(sid) %>% 
+  slice(1) %>% 
+  ungroup() %>% 
+  summarize(range(date))
+ggplot(sim_d, aes(date, score)) +
+  geom_point(alpha = 0.15, stroke = NA) +
+  geom_smooth(se = FALSE, color = "#33B1AE", size = 2)
+```
+
+Creating Models
+```{r}
+sim_d <- sim_d %>% 
+  mutate(
+    days_from_start = as.numeric(date) - min(as.numeric(date))
+  )
+linear <- lmer(score ~ days_from_start + (days_from_start|sid), 
+               data = sim_d,
+               control = lmerControl(optimizer = "Nelder_Mead"))
+arm::display(linear)
+sim_d <- sim_d %>% 
+  mutate(days2 = days_from_start^2)
+quad <- lmer(score ~ days_from_start + days2
+               (days_from_start|sid), 
+             data = sim_d,
+             control = lmerControl(optimizer = "Nelder_Mead"))
+arm::display(quad)
+performance::compare_performance(linear, quad)
+
+sim_d <- sim_d %>% 
+  mutate(days3 = days_from_start^3)
+cubic <- lmer(score ~ days_from_start + days2 + days3 + 
+               (days_from_start|sid), 
+             data = sim_d,
+             control = lmerControl(optimizer = "Nelder_Mead"))
+arm::display(cubic)
+performance::compare_performance(linear, quad, cubic)
+```
+
+You can also use poly() as a function on days from start and then a comma
+cubic <- lmer(score ~ poly(days_from_start, 3) +  
+               (days_from_start|sid), 
+             data = sim_d,
+             control = lmerControl(optimizer = "Nelder_Mead"))
+HOWEVER, the base polynomials will have orthogonal polynomials, which means our output will be even less interpretable than the by-hand version above
+
+```{r log growth}
+sim_d <- sim_d %>% 
+  mutate(days_log = log(days_from_start + 1))
+log_m <- lmer(score ~ days_log + (days_log|sid), 
+              data = sim_d)
+arm::display(log_m)
+```
+
