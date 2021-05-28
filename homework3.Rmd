@@ -1,0 +1,100 @@
+---
+title: "Homework3"
+author: "Zach Schroeder"
+date: "5/28/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r library, message=FALSE}
+library(tidyverse)
+library(lme4)
+library(brms)
+```
+
+```{r data import}
+data <- read_csv(here::here("data", "thai-education.csv"))
+data <- data %>% 
+  mutate(
+    sex = factor(sex, levels = c("boy", "girl"),
+                 labels = c("boy", "girl")),
+    pped = factor(pped, 
+                  levels = c("no", "yes"),
+                  labels = c("no", "yes")),
+    repeated_grade = factor(repeated_grade, 
+                            levels = c("no", "yes"),
+                            labels = c("no", "yes"))
+  )
+
+```
+
+# Does the relation between students' coded sex and likelihood of repeating depend upon the mean SES at the school level?
+
+## Model Fitting
+```{r model fitting}
+set.seed(132145) #Reproducibility
+m0_b <- brms::brm(repeated_grade ~ sex*msesc + (1|schoolid),
+      data = data,
+      cores = 4,
+      family = bernoulli(link = "logit"))
+```
+
+> Model specification explanation: I've included an interaction between sex and msesc as the central question - does the relationship between repeating a grade and students' coded sex *depend* (interact) with School-level SES. I included (1|schoolid) to allow the intercept to vary based on the school-level baseline for repeating a grade.
+
+## Model Checks
+
+### Posterior Predictive Checks
+```{r}
+pp_check(m0_b, type = "bars")
+```
+
+>Check to make sure the dot and bars are aligned - they are! WOooo! This means we aren't seeing sizeable discrepencies between predicted and actual data. 
+
+### Convergence checks
+```{r}
+summary(m0_b)
+```
+
+> Rhat values (signifiers of proper convergence) are less than 1.1, so we're good to proceed
+
+### Chain pattern eye inspection
+```{r}
+plot(m0_b)
+```
+
+> Check for patterns in the chains - they don't seem to have patterns, which matches our Rhat values < 1.1
+
+### LOO Cross-Validation
+```{r}
+plot(loo(m0_b), label_points = TRUE)
+```
+
+> LOO cross validation (points over .7 are signs that we aren't doing a good job, this is an additional check that our model is properly specified)
+
+## Model Inferences:
+
+```{r}
+library(insight)
+m0_posterior <- get_parameters(m0_b)
+ggplot(m0_posterior, aes(b_sexgirl.msesc)) +
+  geom_density(fill = "#1DA1F2") +
+  geom_vline(aes(xintercept = mean(0)),
+             color = "black",
+             size = 1.2) +
+  geom_vline(aes(xintercept = mean(b_sexgirl.msesc)),
+             color = "magenta",
+             size = 1.2)
+sum(m0_posterior$b_sexgirl.msesc < 0) / nrow(m0_posterior)
+```
+
+> We can see from the distribution plot that our interaction effect (that the relationship between sex and repeating a grade is impacted by the school's mean SES) is distributed away from zero (I have a magenta line at the mean value and a black line at 0 for added emphasis). An additional calculation shows that it is 93% likely that the interaction is below 0, which quantifies the trend demonstrated in the density plot above. In summary, we see evidence for an interaction between school SES and sex, which answers the research question thus: Does the relation between students' coded sex and likelihood of repeating depend upon the mean SES at the school level? Yes. We can interpret this coefficient using the figure below, which suggests that as school-level SES increases, there it has a negative, calling back to our estimate of -.30 effect on the relationship between sex and repeating a grade.
+
+```{r}
+conditional_effects(m0_b, "msesc:sex")
+```
+

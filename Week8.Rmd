@@ -1,0 +1,249 @@
+---
+title: "Week8"
+author: "Zach Schroeder"
+date: "5/21/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Equation practice
+```{r}
+library(tidyverse)
+library(lme4)
+d <- read_csv(here::here("data", "three-lev.csv"))
+d
+```
+
+```{r}
+M1 <- lmer(math ~ mobility + (1|schid), data = d)
+M2 <- lmer(math ~ mobility + female + (year|sid) + (1|schid), data = d)
+M3 <- lmer(math ~ mobility + black*year + hispanic*year + female + (year|sid) + (1|schid), data = d)
+M4 <- lmer(math ~ female*year + mobility*year + lowinc + (year|sid) + (year + female|schid), data = d)
+M5 <- lmer(math ~ female + mobility + lowinc + (year|sid) + (year*female || schid))
+M6 <- lmer(math ~ female + (year|sid) + (0 + female|schid), data = d)
+M& <- lmer(math ~ female + year*lowinc + (year|sid) + (year|schid), data = d)
+```
+
+# Markov-Chain Monte-Carlo Sampling
+
+Example MCMC:
+```{r}
+set.seed(42) # for reproducibility
+samples <- c(
+  110, # initial guess
+  rep(NA, 4999) # space for subsequent samples to fill in
+)
+for(i in 2:5000) {
+  # generate proposal distribution
+  proposal <- rnorm(1, mean = samples[i - 1], sd = 10)
+  # calculate current/proposal distribution likelihoood
+  prob_current <- dnorm(samples[i - 1], 100, 15)
+  prob_proposal <- dnorm(proposal, 100, 15)
+  # compute the probability ratio
+  prob_ratio <- prob_proposal / prob_current
+  # Determine which to select
+  if(prob_ratio > runif(1)) {
+    samples[i] <- proposal # accept
+  } else {
+    samples[i] <- samples[i - 1] # reject
+  }
+}
+# ITERATION HISTORY
+tibble(iteration = 1:5000,
+       value = samples) %>% 
+  ggplot(aes(iteration, value)) +
+  geom_line() +
+  geom_hline(yintercept = 100, 
+             color = "magenta",
+             size = 3)
+# DENSITY
+tibble(iteration = 1:5000,
+       value = samples) %>% 
+  ggplot(aes(value)) +
+  geom_density(fill = "#00b4f5",
+               alpha = 0.7) +
+  geom_vline(xintercept = 100, 
+             color = "magenta",
+             size = 3)
+```
+
+# DOING FUN STUFF WITH BAYES - check out 
+"bayes-update-plotting.R"
+
+```{r}
+library(brms)
+```
+
+## Basic Model
+```{r}
+sleep_m0 <- brm(Reaction ~ Days, data = lme4::sleepstudy)
+summary(sleep_m0)
+```
+
+Examining the model:
+```{r}
+# Range of fixed effects
+conditional_effects(sleep_m0)
+```
+
+## Nested Model
+```{r}
+sleep_m1 <- brm(Reaction ~ Days + (Days | Subject), data = lme4::sleepstudy)
+summary(sleep_m1)
+```
+
+Fixed effect
+```{r}
+conditional_effects(sleep_m1)
+```
+
+Checking the model:
+```{r}
+pp_check(sleep_m1)
+plot(sleep_m1)
+```
+
+COOL! GUI for your model
+```{r}
+launch_shinystan(sleep_m1)
+```
+
+# Model Comparison
+The best fitting model will be on top. Use the standard error within your interpretation
+```{r}
+loo_compare(loo(sleep_m0), loo(sleep_m1))
+```
+
+Similar to other information criteria.
+```{r}
+waic(sleep_m0)
+waic(sleep_m1)
+#DOUBLE WHAMMY
+loo_compare(waic(sleep_m0), waic(sleep_m1))
+```
+
+# Logistic Regression
+```{r}
+wages <- read_csv(here::here("data", "wages.csv")) %>% 
+  mutate(hourly_wage = exp(lnw))
+wages_lm <- lm(hourly_wage ~ exper, data = wages)
+```
+
+Graphics
+```{r}
+ggplot(wages, aes(exper, hourly_wage)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE)
+# LN looks better
+ggplot(wages, aes(exper, lnw)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE)
+```
+
+Moving to a binary model:
+```{r}
+wages <- wages %>% 
+  mutate(
+    high_wage = ifelse(
+      hourly_wage > mean(hourly_wage, na.rm = TRUE), 1, 0
+    )
+  )
+wages %>% 
+  select(id, hourly_wage, high_wage)
+means <- wages %>% 
+  group_by(high_wage) %>% 
+  summarize(mean = mean(exper))
+ggplot(wages, aes(exper, high_wage)) +
+  geom_point(alpha = 0.01) +
+  geom_point(aes(x = mean), data = means, 
+             shape = 23, 
+             fill = "cornflowerblue")
+```
+
+Example logistic regressions:
+```{r}
+m_glm <- glm(high_wage ~ exper, 
+             data = wages, 
+             family = binomial(link = "logit"))
+arm::display(m_glm)
+```
+Seeing the example
+```{r}
+tibble(exper = 0:25) %>% 
+  mutate(pred = predict(m_glm, newdata = .)) %>% 
+  ggplot(aes(exper, pred)) +
+  geom_line()
+tibble(exper = 0:25) %>% 
+  mutate(pred = predict(m_glm, 
+                        newdata = ., 
+                        type = "response")) %>% 
+  ggplot(aes(exper, pred)) +
+  geom_line()
+```
+
+Probability Predictions by hand
+```{r}
+coef(m_glm)
+```
+
+EXAMPLE WRITEUP:
+There was a 16 percent chance that a participant with zero years experience would be in the high wage category. The logistic function, which mapped years of experience to the probability of being in the high-wage category, was non-linear, as shown in Figure 1. At its steepest point, a one year increase in experience corresponded with approximately a 6% increase in the probability of being in the high-wage category. For individuals with 5, 10, and 15 years of experience, the probability increased to a 41, 71, and 90 percent chance, respectively.
+
+# MULTI LEVEL LOGISTIC REGRESSION
+
+```{r}
+polls <- rio::import(here::here("data", "polls.dta"),
+                     setclass = "tbl_df")
+polls
+```
+MODEL
+```{r}
+bush_sl <- glm(bush ~ 1, 
+               data = polls,
+               family = binomial(link = "logit"))
+```
+
+MORE MODEL
+```{r}
+library(lme4)
+m0 <- glmer(bush ~ 1 + (1|state),
+           data = polls,
+           family = binomial(link = "logit"))
+arm::display(m0)
+library(broom.mixed)
+m0_tidied <- tidy(m0, effects = "ran_vals", conf.int = TRUE)
+m0_tidied
+m0_tidied %>% 
+  mutate(level = forcats::fct_reorder(level, estimate)) %>% 
+  ggplot(aes(estimate, level)) +
+  geom_errorbarh(aes(xmin = conf.low, xmax = conf.high)) +
+  geom_point(aes(color = estimate)) +
+  geom_vline(xintercept = 0, color = "gray40", size = 3) +
+  labs(x = "Log-Odds Estimate", y = "") +
+  colorspace::scale_color_continuous_diverging(palette = "Blue-Red 2") +
+  guides(color = "none") +
+  theme(panel.grid.major.y = element_blank(),
+        axis.text.y = element_blank())
+```
+
+```{r}
+polls <- polls %>% 
+  mutate(age_c = age - mean(age, na.rm = TRUE))
+m1 <- glmer(bush ~ age_c + female + black + (1|state),
+            data = polls,
+            family = binomial(link = "logit"))
+arm::display(m1)
+```
+
+Random Effects:
+```{r}
+ranef_m2 <- tidy(m2, effects = "ran_vals", conf.int = TRUE) %>% 
+  arrange(level)
+ranef_m2
+```
+

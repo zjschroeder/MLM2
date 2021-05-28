@@ -1,0 +1,39 @@
+---
+title: "Week7"
+author: "Zach Schroeder"
+date: "5/14/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(lme4)
+```
+
+
+Equation practice
+```{r}
+mplus_d <- read_csv(here::here("data", "mplus920.csv"))
+lmer(score ~ 1 + (1|distid), data = mplus_d)
+lmer(score ~ baseline + (1|schid) + (1|distid))
+lmer(score ~  + (1|distid) + baseline*dist_ses + (baseline|schid))
+lmer(score ~ baseline + sch_treatment + dist_ses + 
+       (baseline|schid) + (1|distid),
+     data = mplus_d)
+lmer(score ~ dist+ses + baseline + sch_treatment + (baseline|schid) + (sch_treatment|distid))
+lmer(score ~ baseline * sch_treatment + dist_ses + 
+       (baseline|schid) + 
+       (baseline * sch_treatment||distid),
+           data = mplus_d)
+lmer(score ~ baseline * sch_treatment * dist_ses + 
+             (baseline|schid) + (baseline * sch_treatment||distid),
+           data = mplus_d)
+```
+
+I really liked the work with Bayes, but was too busy taking notes to get it coded! Excited for part 2 next week :)
