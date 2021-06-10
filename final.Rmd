@@ -1,0 +1,174 @@
+---
+title: "final"
+author: "Zach Schroeder"
+date: "6/8/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Data Import and Cleaning
+
+```{r load packages}
+library(rio)
+library(tidyverse)
+library(lme4)
+library(broom.mixed)
+library(performance)
+library(jtools)
+library(writexl)
+```
+
+```{r load data}
+data <- rio::import(here::here("data", "data.RDS"))
+```
+
+```{r clean data}
+data_uc <- data %>%
+  mutate(
+    et = et + 4.196, # Data are already mean centered, pulling mean from prior analysis
+    fdbck = factor(fdbck, labels = c("No", "Yes")),
+    time_chunk = factor(time_chunk, levels = c(1,2,3), labels = c("First Clip", "Middle Clips", "Final Clip"))
+  )
+colnames(data_uc) <- c("ID", "zaki", "likert", "ickes", "feedback", "practice", "time", "time_chunked", "target_ID", "quiz", "semi_invariant")
+
+#Pomp Scoring
+data <- data_uc %>% 
+  mutate(
+    zaki = 10*(zaki - -1)/(1 - -1),
+    likert = 10*(likert - 1)/(8 - 1),
+    ickes = 10*(ickes - 0)/(3 - 0),
+    time = (time*1.5) # Puts these in units of minutes of time
+  )
+
+summary(data)
+```
+
+# Descriptive Statistics
+
+```{r}
+#DESCRIPTIVE STATISTICS
+psych::describe(data_uc)
+sumtab <- data_uc %>% 
+  group_by(target_ID) %>% 
+  summarise(.groups = "keep",
+            likert_mean = mean(likert, na.rm = T),
+            likert_sd = sd(likert, na.rm = T),
+            zaki_mean = mean(zaki, na.rm = T),
+            zaki_sd = sd(zaki, na.rm = T),
+            ickes_mean = mean(ickes, na.rm = T),
+            ickes_sd = sd(ickes, na.rm = T))
+knitr::kable(round(sumtab[,2:7],2))
+```
+
+# Research Aim: DOES time IMPROVE EMPATHIC ACCURACY?
+
+## Zaki Models
+
+```{r Model Comparisons: Zaki}
+m0 <- lmer(zaki ~ (1|ID),
+               control = lmerControl(optimizer = "bobyqa"),
+              data = data)
+m1 <- lmer(zaki ~ time + (1|ID) + (time|target_ID),
+               control = lmerControl(optimizer = "bobyqa"),
+              data = data)
+m2 <- lmer(zaki ~ time + practice + (1|ID) + (time|target_ID),
+                control = lmerControl(optimizer = "bobyqa"),
+              data = data)
+zaki_models <- performance::compare_performance(m0, m1, m2)
+```
+
+## Likert Models
+
+```{r Model Comparisons: Likert}
+m0 <- lmer(likert ~ (1|ID),
+               control = lmerControl(optimizer = "bobyqa"),
+              data = data)
+m1 <- lmer(likert ~ time + (1|ID) + (time|target_ID),
+               control = lmerControl(optimizer = "bobyqa"),
+              data = data)
+m2 <- lmer(likert ~ time + practice + (1|ID) + (time|target_ID),
+                control = lmerControl(optimizer = "bobyqa"),
+              data = data)
+likert_models <- performance::compare_performance(m0, m1, m2)
+```
+
+## Ickes Models
+
+```{r Model Comparisons: Ickes}
+m0 <- lmer(ickes ~ (1|ID),
+               control = lmerControl(optimizer = "bobyqa"),
+              data = data)
+m1 <- lmer(ickes ~ time + (1|ID) + (time|target_ID),
+               control = lmerControl(optimizer = "bobyqa"),
+              data = data)
+m2 <- lmer(ickes ~ time + practice + (1|ID) + (time|target_ID),
+                control = lmerControl(optimizer = "bobyqa"),
+              data = data)
+ickes_models <- performance::compare_performance(m0, m1, m2)
+```
+
+```{r Final Models}
+m_zaki <- lmer(zaki ~ time + (1|ID) + (time|target_ID),
+               control = lmerControl(optimizer = "bobyqa"),
+              data = data)
+m_likert <- lmer(likert ~ time + (1|ID) + (time|target_ID),
+               control = lmerControl(optimizer = "bobyqa"),
+              data = data)
+m_ickes <- lmer(ickes ~ time + (1|ID) + (time|target_ID),
+               control = lmerControl(optimizer = "bobyqa"),
+              data = data)
+```
+
+```{r fixed effects table}
+sjPlot::tab_model(m_zaki, m_likert, m_ickes, pred.labels = c("(Intercept)", "Time"), dv.labels = c("Zaki", "Likert", "Ickes"))
+```
+
+```{r 95% CIs for random effects}
+pull_model_results <- function(model) {
+  tidy(
+    model,
+    conf.int = TRUE, 
+    conf.method = "boot"
+  )
+}
+full_models <- bind_rows(
+  pull_model_results(m_zaki),
+  pull_model_results(m_likert),
+  pull_model_results(m_ickes),
+  .id = "model"
+)
+ggplot(full_models, aes(estimate, term, color = factor(model), group = model)) +
+  geom_errorbarh(aes(xmin = conf.low, xmax = conf.high),
+                 height = 0.2) +
+  geom_point() +
+  facet_wrap(~effect, scales = "free_y") +
+  theme(legend.position = "bottom") +
+  facet_wrap(~model)
+```
+
+### Exporting to excel to import to write-up
+```{r}
+export_mod <- cbind(full_models[1:4], round(full_models[5:9], 2))
+write_xlsx(export_mod,"models.xlsx")
+```
+
+
+```{r zaki exploratory figure}
+data %>% 
+  filter(target_ID == 1|target_ID == 2) %>% 
+  ggplot(aes(time, zaki, group = ID)) +
+  geom_point() +
+  geom_line() +
+  geom_jitter() +
+  facet_wrap(~target_ID) +
+  theme(legend.position = "none") +
+  labs(y = "Zaki Accuracy Score",
+       x = "Time (Minutes)") +
+  jtools::theme_apa()
+```
+

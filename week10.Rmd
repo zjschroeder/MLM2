@@ -1,0 +1,204 @@
+---
+title: "Week10"
+author: "Zach Schroeder"
+date: "6/4/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+alc <- read_csv(here::here("data", "alcohol-adolescents.csv"))
+```
+
+# Theoretical Models to Code
+
+>Does alcohol use increase with age?
+
+```{r}
+library(lme4)
+alc <- alc %>% 
+  mutate(age_c = age - 14)
+rq1 <- lmer(alcuse ~ age_c + (1 + age_c | id),
+             data = alc)
+summary(alc)
+```
+
+> Do children of alcoholics have higher levels of alcohol use?
+
+```{r}
+alc <- alc %>% 
+  mutate(coa = factor(coa),
+         male = factor(male))
+rq2 <- lmer(alcuse ~ age_c + coa + (1 + age_c | id),
+             data = alc)
+```
+
+>Do male children of alcoholics have higher alcohol use than female children of alcoholics?
+
+```{r}
+rq3 <- lmer(alcuse ~ age_c + coa*male +
+              (age_c | id),
+            data = alc)
+```
+
+>Do adolescents' alcohol use trajectories differ between males and females?
+
+```{r}
+rq4 <- lmer(alcuse ~ age_c*male +
+              (age_c | id) ,
+            data = alc)
+```
+
+>Does the trajectory of alcohol use differ for male children of alcoholics than female children of alcoholics?
+
+```{r}
+rq5 <- lmer(alcuse ~ age_c*male*coa +
+              (age_c | id) ,
+            data = alc)
+```
+
+```{r}
+threelev <- read_csv(here::here("data", "three-lev.csv"))
+threelev
+```
+
+>To what extent do math scores, and changes in math scores, vary between students versus between schools?
+
+```{r}
+rq1_math <- lmer(math ~ 1 + year + 
+                   (year | sid) + (year | schid),
+                 data = threelev)
+
+as.data.frame(VarCorr(rq1_math))
+
+as.data.frame(VarCorr(rq1_math)) %>% 
+  mutate(prop = vcov / sum(vcov))
+
+as.data.frame(VarCorr(rq1_math)) %>% 
+  mutate(prop = vcov / sum(vcov)) %>% 
+  ggplot(aes(grp, prop)) +
+  geom_col(aes(fill = var1))
+```
+
+>What is the average difference in math scores among students coded Black or Hispanic, versus those who are not?
+
+```{r}
+rq2_math <- lmer(math ~ year + black + hispanic +
+                   (year | sid) + (year | schid),
+                 data = threelev,
+                 control = lmerControl(optimizer = "bobyqa"))
+```
+
+> To what extent do the differences in gains between students coded Black or Hispanic, versus those who are not, vary between schools?
+
+```{r}
+rq3_math <- lmer(math ~ year*black + year*hispanic +
+                   (year | sid) + (year*black*hispanic | schid),
+                 data = threelev,
+                 control = lmerControl(optimizer = "bobyqa"))
+
+as.data.frame(VarCorr(rq3_math)) %>% 
+  mutate(prop = vcov / sum(vcov)) %>% 
+  ggplot(aes(grp, prop)) +
+  geom_col(aes(fill = var1))
+```
+
+# Lung cancer remission model
+
+```{r}
+library(brms)
+lc <- brm(
+  remission ~ age * tumorsize + lungcapacity + (1|did),
+  data = hdp,
+  family = bernoulli(link = "logit"),
+  cores = 4,
+  backend = "cmdstan"
+)
+```
+
+```{r}
+library(mice) # Missing Data
+naniar::vis_miss(nhanes)
+mi_nhanes <- mice(nhanes, m = 5, print = FALSE)
+m_mice <- brms::brm_multiple(bmi ~ age * chl, 
+                       data = mi_nhanes)
+```
+
+```{r}
+library(lme4)
+Penicillin <- Penicillin %>% 
+  arrange(sample)
+head(Penicillin)
+nested1 <- lmer(diameter ~ 1 + (1 | sample), 
+                data = Penicillin)
+library(sundry)
+pull_residual_vcov(nested1) %>% 
+  image()
+Penicillin <- Penicillin %>% 
+  arrange(plate)
+crossed1 <- lmer(diameter ~ 1 + (1 | sample) + (1|plate), 
+                 data = Penicillin)
+pull_residual_vcov(crossed1) %>% 
+  image()
+```
+
+```{r}
+data(Oxide, package = "nlme")
+head(Oxide)
+nested2 <- lmer(Thickness ~ 1 + (1|Lot/Wafer), data = Oxide)
+pull_residual_vcov(nested2) %>% 
+  image()
+crossed2 <- lmer(Thickness ~ 1 + (1|Lot) + (1|Wafer), 
+                 data = Oxide)
+pull_residual_vcov(crossed2) %>% 
+  image()
+```
+
+```{r}
+achievement <- read_csv(here::here("data", "pupils.csv"))
+achievement
+ccrem <- lmer(achievement ~ 1 + 
+                (1|primary_school_id) + (1|secondary_school_id),
+              data = achievement)
+arm::display(ccrem)
+str(ranef(ccrem))
+pull_residual_vcov(ccrem) %>% 
+  image()
+```
+
+```{r}
+mm_brms <- brm(
+  achievement ~ 1 + 
+    (1 | mm(primary_school_id, secondary_school_id)),
+  data = achievement
+)
+summary(mm_brms)
+```
+
+```{r}
+set.seed(42)
+achievement <- achievement %>% 
+  mutate(primary_school_time = abs(rnorm(1000)),
+         secondary_school_time = abs(rnorm(1000))) %>% 
+  rowwise() %>% 
+  mutate(tot = primary_school_time + secondary_school_time,
+         primary_school_time = primary_school_time / tot,
+         secondary_school_time = secondary_school_time / tot) %>% 
+  ungroup()
+achievement %>% 
+  select(PUPIL, ends_with("time"))
+
+mm_brms2 <- brm(
+  achievement ~ 1 + 
+    (1 | mm(primary_school_id, secondary_school_id,
+            weights = cbind(primary_school_time, 
+                            secondary_school_time))),
+  data = achievement)
+```
+
